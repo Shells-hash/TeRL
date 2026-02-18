@@ -1,3 +1,2 @@
-numpy>=1.20.0
-gymnasium>=0.29.0
-stable-baselines3>=2.0.0
+# Minimal TCP/JSON bridge — no dependencies (Python standard library only).
+# Add packages here when you extend the project (e.g. RL, numpy).

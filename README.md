@@ -1,94 +1,125 @@
-# Terraria RL Environment (Milestone 1)
+# TeRL — Terraria RL TCP Bridge
 
-Gym-style environment for an AI agent that learns to survive the first night in Terraria. This milestone provides a clean, modular environment interface with a mock Terraria backend (no deep learning yet).
+Minimal TCP bridge for receiving JSON game state from a Terraria tModLoader mod. This is a foundation only: no RL or training logic.
 
 ## Setup
 
-1. Create and activate a virtual environment (if not already done):
+1. Create and activate a virtual environment (optional; the bridge uses only the standard library):
 
    ```powershell
    python -m venv venv
    .\venv\Scripts\Activate.ps1
    ```
 
-2. Install dependencies:
+2. No extra dependencies are required for the bridge. If you add them later:
 
    ```powershell
    pip install -r requirements.txt
    ```
 
-## Running
+## Running the bridge client
 
-**Option A — Two terminals**
+The bridge client connects to **localhost:8765** and continuously receives and prints JSON game state.
 
-- Terminal 1: start the mock server  
-  `python mock_server.py`
-- Terminal 2: run the random agent test (10 episodes)  
-  `python test_random_agent.py`
-
-**Option B — Single run**
-
-- `python test_random_agent.py` starts the mock server in a subprocess and then runs 10 episodes.
-
-From the project root, either:
+**Terminal 1 — start the server (mock or Terraria mod):**
 
 ```powershell
 python mock_server.py
 ```
 
-then in another terminal:
+**Terminal 2 — run the bridge client:**
 
 ```powershell
-python test_random_agent.py
+python bridge_client.py
 ```
 
-or just:
+Options:
+
+- `--host 127.0.0.1` — server host (default: 127.0.0.1)
+- `--port 8765` — server port (default: 8765)
+- `--no-request` — do not send a request line; only read (for push-based servers that send JSON without a request)
+- `--debug` — log each request send and each chunk received (to diagnose "no data" from the Terraria server)
+
+The client will reconnect automatically if the connection drops.
+
+### Not receiving data from the Terraria server?
+
+- **Push-based mod:** If the mod sends JSON on its own (no command from the client), run with `--no-request`:  
+  `python bridge_client.py --no-request`
+- **See where it stalls:** Run with `--debug`. You’ll see "Sent request: 'state'" then either "recv N bytes" (data arriving) or nothing (server not replying or not sending newline-terminated lines).
+- The server must send **one JSON object per line**, with each line ending in `\n`.
+
+## Testing the connection
+
+To check that the server is reachable:
 
 ```powershell
-python test_random_agent.py
+python test_server_connection.py
 ```
+
+To perform a request/response exchange (request state, send action 0, receive state again):
+
+```powershell
+python test_server_connection.py --exchange
+```
+
+## Expected JSON format
+
+The server sends **newline-terminated** JSON lines. Each message is a single JSON object. The mock server uses a state object like:
+
+```json
+{
+  "player_x": 0.0,
+  "player_y": 0.0,
+  "health": 100,
+  "wood_count": 0,
+  "is_night": 0,
+  "enemy_distance": 100.0,
+  "enemy_count": 0,
+  "time_of_day": 0,
+  "has_shelter": 0,
+  "step_count": 0,
+  "last_reward_events": {}
+}
+```
+
+The Terraria mod can use the same shape or extend it; the bridge only parses JSON and prints the keys/values.
+
+## Connecting to the Terraria mod
+
+1. Run the Terraria tModLoader mod so it listens on **TCP port 8765** (e.g. on 127.0.0.1).
+2. Run the bridge client on the same machine:
+
+   ```powershell
+   python bridge_client.py --host 127.0.0.1 --port 8765
+   ```
+
+3. If the mod **pushes** state (sends JSON lines without the client requesting them), use:
+
+   ```powershell
+   python bridge_client.py --no-request
+   ```
+
+4. If the mod is **request–response** (like the mock server), leave `--no-request` off so the client sends `state` (or the mod’s request command) before each read.
 
 ## Project layout
 
-- `src/environment.py` — `TerrariaEnv`: `reset()`, `step(action)`, observation space, termination.
-- `src/reward.py` — Shaped reward calculation (wood, tree, shelter, damage, death, survived night).
-- `src/client.py` — Socket I/O: connect, get state, send action (0–6).
-- `mock_server.py` — Fake Terraria server on localhost:8765; serves JSON state and applies actions.
-- `test_random_agent.py` — Runs random actions for 10 episodes and prints per-episode stats.
-
-## Observation and actions
-
-- **Observation vector**: `[player_x, player_y, health, wood_count, is_night, enemy_distance, enemy_count]`
-- **Actions**: 0=left, 1=right, 2=jump, 3=mine, 4=place_block, 5=attack, 6=do_nothing
-
-## Rewards (shaped)
-
-- +2 wood collected, +5 tree chopped, +50 shelter built  
-- -10 damage taken, -100 death, +200 survived night
-
-## Curriculum: learn to move first
-
-Before training "survive the night", you can train on a simpler task: **move right**. The agent gets reward for moving right and a bonus for reaching a target x; episodes end when `player_x >= target` or at max steps.
-
-- **Task** `"move_right"`: reward +1 per step moving right, +10 for reaching target x; done when `player_x >= move_right_target_x` (default 10).
-- **Task** `"survive_night"` (default): full shaped rewards and termination (death, survived night, max steps).
-
-Example:
-
-```python
-from src.environment import TerrariaEnv, TASK_MOVE_RIGHT
-
-env = TerrariaEnv(port=8765, task=TASK_MOVE_RIGHT, move_right_target_x=10.0)
-obs, info = env.reset()
-# ... step with action 1 (move_right) to get reward
+```
+TeRL/
+├── bridge_client.py      # Entry point: TCP client, receives JSON, prints state
+├── mock_server.py        # Fake server for testing (localhost:8765)
+├── test_server_connection.py  # Connection test script
+├── requirements.txt
+├── README.md
+└── .gitignore
 ```
 
-Or run the random agent with the move-right task (episodes will often end sooner when the agent drifts right):
+## Error handling
 
-```powershell
-python test_random_agent.py --move-right
-```
+The bridge client:
 
-## Next steps (out of scope for M1)
+- **Buffers partial TCP data** until a full newline-terminated line is received.
+- **Catches JSON decode errors** and skips invalid lines with a message.
+- **Handles disconnections** by closing the socket and optionally reconnecting after a short delay.
 
-Imitation learning, PPO fine-tuning, curriculum learning, and hierarchical planning will build on this environment.
+Next step: add RL logic on top of this bridge when ready.

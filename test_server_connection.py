@@ -1,17 +1,17 @@
 """
 Test that the Terraria / mock server is reachable on localhost:8765.
-Uses the same client as the RL env; exits 0 on success, 1 on failure.
+Uses the bridge client; exits 0 on success, 1 on failure.
 
 Usage:
   python test_server_connection.py
   python test_server_connection.py --host 127.0.0.1 --port 8765
-  python test_server_connection.py --exchange   # connect, receive one state, send one action, receive again (if server speaks JSON state/action)
+  python test_server_connection.py --exchange   # connect, receive one state, send one action, receive again
 """
 
 import argparse
 import sys
 
-from src.client import TerrariaClient
+from bridge_client import BridgeClient
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -24,11 +24,11 @@ def main() -> int:
     parser.add_argument(
         "--exchange",
         action="store_true",
-        help="After connect: receive_state(), send_action(0), receive_state(); requires server to send state on connect and accept {\"action\": N}.",
+        help="After connect: request_state(), send_action(0), request_state(); requires server to accept 'state' and '0'-'6'.",
     )
     args = parser.parse_args()
 
-    client = TerrariaClient(host=args.host, port=args.port, timeout=5.0)
+    client = BridgeClient(host=args.host, port=args.port, timeout=5.0)
     try:
         client.connect()
         print(f"OK Connected to {args.host}:{args.port}")
@@ -38,11 +38,10 @@ def main() -> int:
 
     if args.exchange:
         try:
-            state = client.receive_state()
-            print(f"  receive_state() -> keys: {list(state.keys())}")
-            client.send_action(0)
-            next_state = client.receive_state()
-            print(f"  send_action(0) -> receive_state() -> keys: {list(next_state.keys())}")
+            state = client.request_state()
+            print(f"  request_state() -> keys: {list(state.keys())}")
+            next_state = client.send_action(0)
+            print(f"  send_action(0) -> keys: {list(next_state.keys())}")
         except Exception as e:
             print(f"FAIL Exchange failed: {e}", file=sys.stderr)
             client.close()
